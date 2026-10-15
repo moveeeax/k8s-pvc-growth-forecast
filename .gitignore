@@ -1,0 +1,13 @@
+# Keep ignores anchored to the repo root so they never swallow source directories.
+/.venv/
+/build/
+/dist/
+/.pytest_cache/
+/*.egg-info/
+__pycache__/
+*.py[cod]
+/.coverage
+/htmlcov/
+
+# Fixtures are part of the test suite and must always be tracked.
+!testdata/**

@@ -1,0 +1,43 @@
+# Weekly capacity review: run the forecast against the in-cluster Prometheus and fail the
+# job when a volume is inside the warning horizon. Mount nothing, install nothing — the tool
+# is stdlib-only Python, so the upstream python image is enough.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pvc-growth-forecast
+  namespace: monitoring
+spec:
+  schedule: "0 7 * * 1" # Monday 07:00, before the capacity review
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: forecast
+              image: python:3.12-alpine
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  apk add --no-cache git >/dev/null
+                  git clone --depth 1 https://github.com/moveeeax/k8s-pvc-growth-forecast /src
+                  cd /src
+                  ./k8s-pvc-growth-forecast \
+                    --prometheus http://prometheus-operated.monitoring.svc:9090 \
+                    --lookback 14d \
+                    --step 1h \
+                    --warning-days 30 \
+                    --critical-days 7 \
+                    --format markdown \
+                    --fail-on critical
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi

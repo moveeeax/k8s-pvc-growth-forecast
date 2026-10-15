@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+      - name: Unit tests
+        run: python -m pytest -q
+      - name: CLI against the fixture (findings expected, exit 1)
+        run: |
+          set +e
+          python k8s-pvc-growth-forecast --fixture testdata/range.json
+          code=$?
+          set -e
+          test "$code" -eq 1
+      - name: CLI with --fail-on never (exit 0)
+        run: python k8s-pvc-growth-forecast --fixture testdata/range.json --fail-on never --format markdown
+      - name: Fixtures are reproducible
+        run: |
+          python scripts/make_fixtures.py
+          git diff --exit-code -- testdata
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install from source
+        run: python -m pip install .
+      - name: Console script runs
+        run: |
+          k8s-pvc-growth-forecast --version
+          k8s-pvc-growth-forecast --fixture testdata/range.json --format json --fail-on never

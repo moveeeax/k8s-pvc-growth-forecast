@@ -1,0 +1,87 @@
+{
+  "summary": {
+    "critical": 0,
+    "warning": 1,
+    "ok": 1,
+    "stable": 2,
+    "low-confidence": 1,
+    "no-data": 0
+  },
+  "volumes": [
+    {
+      "namespace": "prod",
+      "persistentvolumeclaim": "postgres-data",
+      "status": "warning",
+      "used_bytes": 96636764160,
+      "capacity_bytes": 107374182400,
+      "free_bytes": 10737418240,
+      "used_percent": 90.0,
+      "growth_bytes_per_day": 1073741824,
+      "days_to_full": 10.0,
+      "r2": 1.0,
+      "samples": 169,
+      "resized_at": null,
+      "note": ""
+    },
+    {
+      "namespace": "dev",
+      "persistentvolumeclaim": "scratch",
+      "status": "low-confidence",
+      "used_bytes": 26365242424,
+      "capacity_bytes": 53687091200,
+      "free_bytes": 27321848776,
+      "used_percent": 49.11,
+      "growth_bytes_per_day": 348332563,
+      "days_to_full": 78.44,
+      "r2": 0.0606,
+      "samples": 169,
+      "resized_at": null,
+      "note": "R2 0.06 below --min-r2 0.50; treat the forecast as a hint"
+    },
+    {
+      "namespace": "prod",
+      "persistentvolumeclaim": "metrics-data",
+      "status": "ok",
+      "used_bytes": 41875931136,
+      "capacity_bytes": 214748364800,
+      "free_bytes": 172872433664,
+      "used_percent": 19.5,
+      "growth_bytes_per_day": 1073741824,
+      "days_to_full": 161.0,
+      "r2": 1.0,
+      "samples": 84,
+      "resized_at": 1759701200,
+      "note": "refit on the 84 samples after the resize at 2025-10-05 21:53 UTC"
+    },
+    {
+      "namespace": "staging",
+      "persistentvolumeclaim": "log-archive",
+      "status": "stable",
+      "used_bytes": 49392123904,
+      "capacity_bytes": 85899345920,
+      "free_bytes": 36507222016,
+      "used_percent": 57.5,
+      "growth_bytes_per_day": -2147483648,
+      "days_to_full": null,
+      "r2": 1.0,
+      "samples": 169,
+      "resized_at": null,
+      "note": "flat or shrinking"
+    },
+    {
+      "namespace": "staging",
+      "persistentvolumeclaim": "redis-cache",
+      "status": "stable",
+      "used_bytes": 12856901332,
+      "capacity_bytes": 21474836480,
+      "free_bytes": 8617935148,
+      "used_percent": 59.87,
+      "growth_bytes_per_day": -1567517,
+      "days_to_full": null,
+      "r2": 0.007,
+      "samples": 169,
+      "resized_at": null,
+      "note": "flat or shrinking"
+    }
+  ]
+}

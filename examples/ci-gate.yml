@@ -1,0 +1,44 @@
+# Gate a cluster change on storage headroom: query Prometheus through a port-forward and
+# fail the job if any PVC fills within --critical-days.
+name: storage-headroom
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: moveeeax/k8s-pvc-growth-forecast
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Port-forward Prometheus
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          kubectl -n monitoring port-forward svc/prometheus-operated 9090:9090 &
+          for _ in $(seq 30); do
+            curl -sf http://127.0.0.1:9090/-/ready && break
+            sleep 1
+          done
+
+      - name: Forecast
+        run: |
+          ./k8s-pvc-growth-forecast \
+            --prometheus http://127.0.0.1:9090 \
+            --lookback 14d \
+            --critical-days 7 \
+            --format markdown \
+            --fail-on critical | tee "$GITHUB_STEP_SUMMARY"

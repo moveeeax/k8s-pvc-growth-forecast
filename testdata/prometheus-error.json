@@ -1,0 +1,14 @@
+{
+ "used": {
+  "status": "error",
+  "errorType": "bad_data",
+  "error": "parse error at char 1: unknown function \"kubelet_volume_stats\""
+ },
+ "capacity": {
+  "status": "success",
+  "data": {
+   "resultType": "matrix",
+   "result": []
+  }
+ }
+}

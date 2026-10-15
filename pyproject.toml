@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k8s-pvc-growth-forecast"
+version = "0.1.0"
+description = "Forecast when every Kubernetes PersistentVolumeClaim runs out of space"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Michael Tarassov", email = "michael@tarassov.me" }]
+keywords = ["kubernetes", "prometheus", "sre", "storage", "capacity-planning", "monitoring"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/moveeeax/k8s-pvc-growth-forecast"
+
+[project.scripts]
+k8s-pvc-growth-forecast = "pvcforecast.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools]
+packages = ["pvcforecast"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
