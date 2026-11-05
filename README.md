@@ -1,7 +1,7 @@
 # k8s-pvc-growth-forecast
 
 [![ci](https://github.com/moveeeax/k8s-pvc-growth-forecast/actions/workflows/ci.yml/badge.svg)](https://github.com/moveeeax/k8s-pvc-growth-forecast/actions/workflows/ci.yml)
-[![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A PVC that is 71% full tells you nothing. A PVC that gained 4 GiB a day for the last week and
@@ -81,6 +81,7 @@ $ echo $?
 | `--selector` | - | Extra PromQL matchers, e.g. `persistentvolumeclaim=~"data-.*"` |
 | `--format` | `table` | `table`, `json` or `markdown` |
 | `--fail-on` | `warning` | `warning`, `critical` or `never` |
+| `--timeout` | `30` | HTTP timeout for each Prometheus query, in seconds |
 
 Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` query or parse error.
 
@@ -132,4 +133,4 @@ feed the slopes into Prometheus as recording rules and alert on those instead.
 
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).
