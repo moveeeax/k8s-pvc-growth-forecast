@@ -15,10 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: moveeeax/k8s-pvc-growth-forecast
-      - uses: actions/setup-python@v5
+          ref: e5225a657d5bfe84582f10483b9098bd4f4652dd # v0.1.0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
