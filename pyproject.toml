@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "k8s-pvc-growth-forecast"
-version = "0.1.0"
+version = "0.2.0"
 description = "Forecast when every Kubernetes PersistentVolumeClaim runs out of space"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Michael Tarassov", email = "michael@tarassov.me" }]
 keywords = ["kubernetes", "prometheus", "sre", "storage", "capacity-planning", "monitoring"]
