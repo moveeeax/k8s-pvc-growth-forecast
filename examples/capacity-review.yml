@@ -1,6 +1,9 @@
 # Weekly capacity review: run the forecast against the in-cluster Prometheus and fail the
-# job when a volume is inside the warning horizon. Mount nothing, install nothing — the tool
-# is stdlib-only Python, so the upstream python image is enough.
+# job when a volume is inside the warning horizon. The tool is stdlib-only Python, so the
+# upstream python image is enough: no pip install, no git. The job downloads the source
+# archive of one pinned release commit (never a moving branch) and runs it as an
+# unprivileged user. To upgrade, replace REF with the commit of a newer release tag:
+#   git ls-remote --tags https://github.com/moveeeax/k8s-pvc-growth-forecast
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -17,6 +20,17 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 16Mi
           containers:
             - name: forecast
               image: python:3.12-alpine
@@ -24,9 +38,16 @@ spec:
               args:
                 - |
                   set -eu
-                  apk add --no-cache git >/dev/null
-                  git clone --depth 1 https://github.com/moveeeax/k8s-pvc-growth-forecast /src
-                  cd /src
+                  REF=e5225a657d5bfe84582f10483b9098bd4f4652dd # v0.1.0
+                  python3 - "$REF" <<'PY'
+                  import io, sys, tarfile, urllib.request
+                  url = "https://github.com/moveeeax/k8s-pvc-growth-forecast/archive/%s.tar.gz" % sys.argv[1]
+                  with urllib.request.urlopen(url, timeout=60) as response:
+                      data = response.read()
+                  with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+                      archive.extractall("/work", filter="data")
+                  PY
+                  cd "/work/k8s-pvc-growth-forecast-${REF}"
                   ./k8s-pvc-growth-forecast \
                     --prometheus http://prometheus-operated.monitoring.svc:9090 \
                     --lookback 14d \
@@ -35,6 +56,17 @@ spec:
                     --critical-days 7 \
                     --format markdown \
                     --fail-on critical
+              env:
+                - name: PYTHONDONTWRITEBYTECODE
+                  value: "1"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: work
+                  mountPath: /work
               resources:
                 requests:
                   cpu: 50m
