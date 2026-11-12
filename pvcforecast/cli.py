@@ -6,18 +6,32 @@ Exit codes: 0 clean, 1 findings at or above ``--fail-on``, 2 query or parse erro
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
-from typing import List, Optional, Sequence
+import urllib.parse
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import __version__
 from .fit import DEFAULT_HORIZON_DAYS, forecast_all, should_fail, worst_status
-from .prom import QueryError, VolumeSeries, fetch_series, load_fixture, parse_duration
+from .prom import (
+    QueryError,
+    VolumeSeries,
+    basic_authorization,
+    bearer_authorization,
+    fetch_series,
+    load_fixture,
+    parse_duration,
+    parse_header,
+    resolve_bearer_token,
+)
 from .report import render
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
 EXIT_ERROR = 2
+
+PASSWORD_ENV = "PROM_PASSWORD"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -75,8 +89,67 @@ def build_parser() -> argparse.ArgumentParser:
         help="exit 1 when a volume reaches this status (default: %(default)s)",
     )
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds (default: %(default)s)")
+    auth = parser.add_argument_group("authentication (live queries only)")
+    auth.add_argument(
+        "--bearer-token-file",
+        metavar="PATH",
+        help="send the token in PATH as 'Authorization: Bearer'; 'auto' uses the pod's "
+        "service-account token when it is mounted",
+    )
+    auth.add_argument(
+        "--basic-auth-user",
+        metavar="USER",
+        help="HTTP basic auth user; the password is read from ${}".format(PASSWORD_ENV),
+    )
+    auth.add_argument(
+        "--header",
+        metavar="'NAME: VALUE'",
+        action="append",
+        default=[],
+        help="extra request header, repeatable, e.g. 'X-Scope-OrgID: team-a'",
+    )
+    auth.add_argument("--ca-file", metavar="PATH", help="CA bundle (PEM) to verify an HTTPS Prometheus")
     parser.add_argument("--version", action="version", version="k8s-pvc-growth-forecast {}".format(__version__))
     return parser
+
+
+def _connection(args: argparse.Namespace) -> Tuple[Dict[str, str], Optional[str]]:
+    """Turn the authentication flags into extra headers and an ``Authorization`` value."""
+    headers: Dict[str, str] = {}
+    authorization: Optional[str] = None
+    for raw in args.header:
+        name, value = parse_header(raw)
+        if name.lower() == "authorization":
+            if authorization is not None:
+                raise ValueError("--header Authorization given more than once")
+            authorization = value
+            continue
+        if any(existing.lower() == name.lower() for existing in headers):
+            raise ValueError("--header {} given more than once".format(name))
+        headers[name] = value
+
+    if args.bearer_token_file and args.basic_auth_user:
+        raise ValueError("use either --bearer-token-file or --basic-auth-user, not both")
+    if (args.bearer_token_file or args.basic_auth_user) and authorization is not None:
+        raise ValueError("--header Authorization conflicts with --bearer-token-file/--basic-auth-user")
+
+    if args.basic_auth_user:
+        password = os.environ.get(PASSWORD_ENV)
+        if password is None:
+            raise ValueError("--basic-auth-user needs the password in ${}".format(PASSWORD_ENV))
+        authorization = basic_authorization(args.basic_auth_user, password)
+    token = resolve_bearer_token(args.bearer_token_file)
+    if token is not None:
+        authorization = bearer_authorization(token)
+
+    if authorization is not None and urllib.parse.urlsplit(args.prometheus).scheme != "https":
+        print(
+            "k8s-pvc-growth-forecast: warning: sending credentials to {} over plain HTTP".format(
+                args.prometheus
+            ),
+            file=sys.stderr,
+        )
+    return headers, authorization
 
 
 def _collect(args: argparse.Namespace) -> List[VolumeSeries]:
@@ -87,6 +160,7 @@ def _collect(args: argparse.Namespace) -> List[VolumeSeries]:
         step = parse_duration(args.step)
         if step >= lookback:
             raise QueryError("--step must be shorter than --lookback")
+        headers, authorization = _connection(args)
         series = fetch_series(
             args.prometheus,
             end=time.time(),
@@ -95,6 +169,9 @@ def _collect(args: argparse.Namespace) -> List[VolumeSeries]:
             namespace=args.namespace,
             selector=args.selector,
             timeout=args.timeout,
+            headers=headers,
+            authorization=authorization,
+            ca_file=args.ca_file,
         )
     if args.namespace:
         series = [item for item in series if item.key.namespace == args.namespace]

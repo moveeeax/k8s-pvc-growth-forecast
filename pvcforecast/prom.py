@@ -9,11 +9,20 @@ A fixture file is a single JSON object holding one ``/api/v1/query_range`` respo
 metric, so a recorded cluster can be replayed offline:
 
     {"used": {...range response...}, "capacity": {...range response...}}
+
+Live queries can carry credentials for managed or multi-tenant endpoints (Grafana Cloud,
+Mimir, Thanos behind an auth proxy, OpenShift): a bearer token or basic auth goes into the
+``Authorization`` header, extra headers such as ``X-Scope-OrgID`` ride along as given, and
+``ca_file`` pins the CA bundle used to verify an HTTPS endpoint.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import os
+import re
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +33,12 @@ CAPACITY_METRIC = "kubelet_volume_stats_capacity_bytes"
 
 NAMESPACE_LABEL = "namespace"
 CLAIM_LABEL = "persistentvolumeclaim"
+
+# Projected service-account token mounted into every pod that does not opt out.
+SERVICE_ACCOUNT_TOKEN = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+# RFC 9110 field-name: a token of visible ASCII without separators.
+_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 Sample = Tuple[float, float]
 
@@ -183,14 +198,95 @@ def load_fixture(path: str) -> List[VolumeSeries]:
     )
 
 
-def _range_query(base_url: str, query: str, start: float, end: float, step: int, timeout: float) -> object:
+def parse_header(text: str) -> Tuple[str, str]:
+    """Split ``'Name: value'`` into a validated ``(name, value)`` pair."""
+    name, sep, value = (text or "").partition(":")
+    name = name.strip()
+    value = value.strip()
+    if not sep or not name:
+        raise ValueError("header {!r} must look like 'Name: value'".format(text))
+    if not _HEADER_NAME.match(name):
+        raise ValueError("invalid header name {!r}".format(name))
+    if any(ch in value for ch in "\r\n\0"):
+        raise ValueError("header {} must not contain line breaks or NUL".format(name))
+    return name, value
+
+
+def read_token_file(path: str) -> str:
+    """Read a bearer token from disk, trimming the trailing newline most tools leave."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            token = handle.read().strip()
+    except OSError as exc:
+        raise QueryError("cannot read bearer token file {}: {}".format(path, exc))
+    if not token:
+        raise QueryError("bearer token file {} is empty".format(path))
+    if any(ch in token for ch in "\r\n\0"):
+        raise QueryError("bearer token file {} must hold a single line".format(path))
+    return token
+
+
+def resolve_bearer_token(spec: Optional[str], service_account_path: str = SERVICE_ACCOUNT_TOKEN) -> Optional[str]:
+    """Return the token for ``--bearer-token-file``.
+
+    ``auto`` uses the pod's service-account token when it is mounted and sends no token
+    otherwise, so the same command line works in cluster and from a laptop.
+    """
+    if not spec:
+        return None
+    if spec == "auto":
+        if not os.path.isfile(service_account_path):
+            return None
+        return read_token_file(service_account_path)
+    return read_token_file(spec)
+
+
+def bearer_authorization(token: str) -> str:
+    return "Bearer {}".format(token)
+
+
+def basic_authorization(user: str, password: str) -> str:
+    """Build an RFC 7617 ``Basic`` credential; the user-id may not contain a colon."""
+    if ":" in user:
+        raise ValueError("basic auth user must not contain ':'")
+    raw = "{}:{}".format(user, password).encode("utf-8")
+    return "Basic {}".format(base64.b64encode(raw).decode("ascii"))
+
+
+def ssl_context(ca_file: Optional[str]) -> Optional[ssl.SSLContext]:
+    """A verifying TLS context that trusts ``ca_file``, or ``None`` for the system default."""
+    if not ca_file:
+        return None
+    try:
+        return ssl.create_default_context(cafile=ca_file)
+    except (OSError, ssl.SSLError) as exc:
+        raise QueryError("cannot load CA file {}: {}".format(ca_file, exc))
+
+
+def _range_query(
+    base_url: str,
+    query: str,
+    start: float,
+    end: float,
+    step: int,
+    timeout: float,
+    headers: Optional[Dict[str, str]] = None,
+    authorization: Optional[str] = None,
+    context: Optional[ssl.SSLContext] = None,
+) -> object:
     params = urllib.parse.urlencode(
         {"query": query, "start": repr(start), "end": repr(end), "step": "{}s".format(step)}
     )
     url = "{}/api/v1/query_range?{}".format(base_url.rstrip("/"), params)
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    for name, value in (headers or {}).items():
+        request.add_header(name, value)
+    if authorization:
+        # Unredirected: urllib copies ordinary headers onto a redirect, possibly to another
+        # host, and a credential must never follow it there.
+        request.add_unredirected_header("Authorization", authorization)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
             body = response.read()
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -217,24 +313,31 @@ def fetch_series(
     namespace: Optional[str] = None,
     selector: Optional[str] = None,
     timeout: float = 30.0,
+    headers: Optional[Dict[str, str]] = None,
+    authorization: Optional[str] = None,
+    ca_file: Optional[str] = None,
 ) -> List[VolumeSeries]:
-    """Range-query both kubelet metrics over the lookback window and join them per PVC."""
+    """Range-query both kubelet metrics over the lookback window and join them per PVC.
+
+    ``authorization`` is the full ``Authorization`` header value (``Bearer ...`` or
+    ``Basic ...``); ``headers`` are sent as given, for example ``X-Scope-OrgID``.
+    """
     start = end - lookback_seconds
-    used = parse_matrix(
-        _range_query(
-            base_url, build_query(USED_METRIC, namespace, selector), start, end, step_seconds, timeout
-        ),
-        "used-bytes query",
-    )
-    capacity = parse_matrix(
-        _range_query(
+    context = ssl_context(ca_file)
+
+    def query(metric: str) -> object:
+        return _range_query(
             base_url,
-            build_query(CAPACITY_METRIC, namespace, selector),
+            build_query(metric, namespace, selector),
             start,
             end,
             step_seconds,
             timeout,
-        ),
-        "capacity-bytes query",
-    )
+            headers=headers,
+            authorization=authorization,
+            context=context,
+        )
+
+    used = parse_matrix(query(USED_METRIC), "used-bytes query")
+    capacity = parse_matrix(query(CAPACITY_METRIC), "capacity-bytes query")
     return join_series(used, capacity)

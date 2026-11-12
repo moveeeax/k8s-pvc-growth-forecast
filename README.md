@@ -49,6 +49,21 @@ k8s-pvc-growth-forecast --lookback 14d --format markdown --fail-on critical
 # One namespace, tighter thresholds
 k8s-pvc-growth-forecast --namespace prod --warning-days 45 --critical-days 14
 
+# Grafana Cloud or another hosted Prometheus: basic auth, password from the environment
+PROM_PASSWORD="$GRAFANA_CLOUD_TOKEN" k8s-pvc-growth-forecast \
+  --prometheus https://prometheus-prod-<NN>-<region>.grafana.net/api/prom \
+  --basic-auth-user 123456
+
+# Mimir or Cortex: pick the tenant
+k8s-pvc-growth-forecast --prometheus http://mimir-gateway.mimir.svc/prometheus \
+  --header 'X-Scope-OrgID: team-a'
+
+# OpenShift Thanos querier from inside a pod, with the pod's service-account token
+k8s-pvc-growth-forecast \
+  --prometheus https://thanos-querier.openshift-monitoring.svc:9091 \
+  --bearer-token-file auto \
+  --ca-file /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+
 # Offline, against recorded data
 k8s-pvc-growth-forecast --fixture testdata/range.json --format json
 ```
@@ -82,8 +97,21 @@ $ echo $?
 | `--format` | `table` | `table`, `json` or `markdown` |
 | `--fail-on` | `warning` | `warning`, `critical` or `never` |
 | `--timeout` | `30` | HTTP timeout for each Prometheus query, in seconds |
+| `--bearer-token-file PATH` | - | Send the token in `PATH` as `Authorization: Bearer`; `auto` uses the pod's service-account token when mounted and sends nothing otherwise |
+| `--basic-auth-user USER` | - | HTTP basic auth; the password comes from `$PROM_PASSWORD`, never from the command line |
+| `--header 'NAME: VALUE'` | - | Extra request header, repeatable, e.g. `X-Scope-OrgID: team-a` |
+| `--ca-file PATH` | system trust store | PEM CA bundle used to verify an HTTPS Prometheus |
 
 Exit codes: `0` clean, `1` findings at or above `--fail-on`, `2` query or parse error.
+
+### Authentication
+
+The authentication flags apply to live queries only; `--fixture` ignores them. Bearer token and
+basic auth are mutually exclusive, and `--header 'Authorization: ...'` counts as a credential
+too. The `Authorization` header is never forwarded when Prometheus answers with a redirect,
+so a token cannot leak to whatever host the redirect points at. Other `--header` values are
+forwarded. Credentials sent to an `http://` URL produce a warning on stderr. TLS verification
+is always on: `--ca-file` adds trust, nothing turns verification off.
 
 ## How it works
 
