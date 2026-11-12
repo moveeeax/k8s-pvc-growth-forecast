@@ -49,16 +49,21 @@ k8s-pvc-growth-forecast --lookback 14d --format markdown --fail-on critical
 # One namespace, tighter thresholds
 k8s-pvc-growth-forecast --namespace prod --warning-days 45 --critical-days 14
 
-# Grafana Cloud or another hosted Prometheus: basic auth, password from the environment
+# Grafana Cloud: basic auth with the metrics instance ID as user and an access policy
+# token (scope metrics:read) as password. Copy the query endpoint URL and the instance
+# ID from the Prometheus card's Details page in the Cloud Portal.
 PROM_PASSWORD="$GRAFANA_CLOUD_TOKEN" k8s-pvc-growth-forecast \
-  --prometheus https://prometheus-prod-<NN>-<region>.grafana.net/api/prom \
-  --basic-auth-user 123456
+  --prometheus '<query endpoint URL from the Details page>' \
+  --basic-auth-user '<metrics instance ID>'
 
 # Mimir or Cortex: pick the tenant
 k8s-pvc-growth-forecast --prometheus http://mimir-gateway.mimir.svc/prometheus \
   --header 'X-Scope-OrgID: team-a'
 
-# OpenShift Thanos querier from inside a pod, with the pod's service-account token
+# OpenShift Thanos querier from inside a pod, with the pod's service-account token.
+# Port 9091 serves all namespaces and needs the cluster-monitoring-view cluster role
+# bound to the service account. The serving cert is signed by the OpenShift service CA;
+# --ca-file points at a CA bundle holding it (see the note below the examples).
 k8s-pvc-growth-forecast \
   --prometheus https://thanos-querier.openshift-monitoring.svc:9091 \
   --bearer-token-file auto \
@@ -67,6 +72,22 @@ k8s-pvc-growth-forecast \
 # Offline, against recorded data
 k8s-pvc-growth-forecast --fixture testdata/range.json --format json
 ```
+
+Notes on the hosted examples:
+
+- Grafana Cloud: the hostname differs per stack and region, so it is not spelled out here.
+  The Prometheus HTTP API sits under the query endpoint URL, which is the value to pass to
+  `--prometheus` ([Grafana Cloud: query metrics using HTTP APIs](https://grafana.com/docs/grafana-cloud/send-data/metrics/metrics-prometheus/query-http-api/)).
+- OpenShift: the `thanos-querier` service in `openshift-monitoring` exposes port 9091 for
+  all Thanos Querier endpoints (`cluster-monitoring-view` or `cluster-monitoring-metrics-api`
+  role) and port 9092 for queries restricted to one project (`view` role in that project)
+  ([service definition in cluster-monitoring-operator](https://github.com/openshift/cluster-monitoring-operator/blob/main/assets/thanos-querier/service.yaml)).
+  The OpenShift docs describe `service-ca.crt` in the service-account directory as mounted
+  automatically into pods
+  ([OpenShift 3.11: secrets](https://docs.redhat.com/en/documentation/openshift_container_platform/3.11/html/developer_guide/dev-guide-secrets)).
+  If it is missing in yours, mount a ConfigMap annotated with
+  `service.beta.openshift.io/inject-cabundle=true` and point `--ca-file` at its
+  `service-ca.crt` key ([OpenShift: configuring certificates](https://docs.redhat.com/en/documentation/openshift_container_platform/4.8/html/security_and_compliance/configuring-certificates)).
 
 Real run against the committed fixture:
 
